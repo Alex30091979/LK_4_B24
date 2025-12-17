@@ -1,4 +1,4 @@
-import { prisma } from "../prisma.js";
+import type { Storage } from "../storage/storage.js";
 
 /**
  * Demo CAPTCHA policy:
@@ -7,8 +7,8 @@ import { prisma } from "../prisma.js";
  *
  * Replace with real provider (reCAPTCHA/HCaptcha) without changing auth flows.
  */
-export async function isCaptchaRequired(key: string) {
-  const row = await prisma.authAttempt.findUnique({ where: { key } });
+export async function isCaptchaRequired(storage: Storage, key: string) {
+  const row = await storage.attemptFind(key);
   return (row?.count ?? 0) >= 4;
 }
 

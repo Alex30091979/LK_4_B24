@@ -1,6 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Role } from "@lk/shared";
-import { prisma } from "../prisma.js";
 
 export async function requireAccessToken(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -28,7 +27,8 @@ export async function requireAdminWithMfa(request: FastifyRequest, reply: Fastif
     reply.code(403);
     throw new Error("MFA required");
   }
-  const session = await prisma.authSession.findUnique({ where: { id: request.user.sid } });
+  const storage = (request.server as any).storage;
+  const session = await storage.sessionFindById(request.user.sid);
   if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now() || !session.mfaVerified) {
     reply.code(401);
     throw new Error("Session invalid");

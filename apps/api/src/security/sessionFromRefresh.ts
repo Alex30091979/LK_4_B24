@@ -1,11 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { prisma } from "../prisma.js";
 import { REFRESH_COOKIE_NAME, type RefreshTokenPayload } from "./tokens.js";
 import { sha256Base64Url } from "../utils/crypto.js";
+import type { Storage } from "../storage/storage.js";
 
 export async function getSessionFromRefreshCookie(args: {
   fastify: FastifyInstance;
   request: FastifyRequest;
+  storage: Storage;
   refreshSecret: string;
 }) {
   const token = (args.request.cookies as Record<string, string | undefined>)[REFRESH_COOKIE_NAME];
@@ -18,7 +19,7 @@ export async function getSessionFromRefreshCookie(args: {
     return null;
   }
 
-  const session = await prisma.authSession.findUnique({ where: { id: payload.sid } });
+  const session = await args.storage.sessionFindById(payload.sid);
   if (!session) return null;
   if (session.revokedAt) return null;
   if (session.expiresAt.getTime() <= Date.now()) return null;

@@ -4,6 +4,7 @@ import type { SmsProvider } from "../integrations/sms/smsProvider.js";
 import type { BitrixService } from "../integrations/bitrix/bitrixService.js";
 import type { ReferralService } from "../domain/referrals/referralService.js";
 import type { BitrixSyncService } from "../integrations/bitrix/syncService.js";
+import type { Storage } from "../storage/storage.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -12,6 +13,7 @@ declare module "fastify" {
     bitrix: BitrixService;
     referrals: ReferralService;
     bitrixSync: BitrixSyncService;
+    storage: Storage;
   }
 }
 

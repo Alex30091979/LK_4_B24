@@ -1,6 +1,6 @@
 import type { ContractStatus } from "@lk/shared";
-import { prisma } from "../../prisma.js";
 import type { BitrixService } from "../../integrations/bitrix/bitrixService.js";
+import type { Storage } from "../../storage/storage.js";
 
 export type FlatRecommendationRow = {
   referredBitrixContactId: string;
@@ -15,10 +15,13 @@ export type FlatRecommendationRow = {
 };
 
 export class ReferralService {
-  constructor(private bitrix: BitrixService) {}
+  constructor(
+    private bitrix: BitrixService,
+    private storage: Storage
+  ) {}
 
   async getDirectReferrals(referrerBitrixId: string) {
-    return prisma.referralEdge.findMany({ where: { referrerBitrixId } });
+    return this.storage.referralEdgesByReferrerId(referrerBitrixId);
   }
 
   async buildFlatTree(args: { rootBitrixId: string; maxDepth: number }) {
@@ -33,9 +36,7 @@ export class ReferralService {
     depthById.set(root, 0);
 
     for (let d = 1; d <= maxDepth; d++) {
-      const edges = await prisma.referralEdge.findMany({
-        where: { referrerBitrixId: { in: frontier } }
-      });
+      const edges = await this.storage.referralEdgesByReferrerIds(frontier);
       const next: string[] = [];
       for (const e of edges) {
         if (visited.has(e.referredBitrixId)) continue;
@@ -51,9 +52,7 @@ export class ReferralService {
     const allReferred = Array.from(depthById.keys()).filter((x) => x !== root);
     if (allReferred.length === 0) return [];
 
-    const contracts = await prisma.contract.findMany({
-      where: { referredBitrixId: { in: allReferred } }
-    });
+    const contracts = await this.storage.contractsByReferredIds(allReferred);
 
     const rows: FlatRecommendationRow[] = [];
     for (const c of contracts) {
@@ -82,7 +81,7 @@ export class ReferralService {
   }
 
   async isContractVisibleToRoot(args: { contractId: string; rootBitrixId: string; maxDepth: number }) {
-    const contract = await prisma.contract.findUnique({ where: { id: args.contractId } });
+    const contract = await this.storage.contractFindById(args.contractId);
     if (!contract) return { visible: false as const };
     const rows = await this.buildFlatTree({ rootBitrixId: args.rootBitrixId, maxDepth: args.maxDepth });
     const match = rows.find((r) => r.contractId === args.contractId);

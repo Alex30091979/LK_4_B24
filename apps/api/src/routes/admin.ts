@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { prisma } from "../prisma.js";
 import { requireAdminWithMfa } from "../security/guards.js";
 import { hashPassword } from "../security/password.js";
 import { writeAudit } from "../audit.js";
@@ -29,21 +28,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
       pageSize: z.coerce.number().int().min(1).max(100).default(20)
     });
     const q = Query.parse(request.query);
-    const total = await prisma.user.count();
-    const users = await prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
+    const total = await fastify.storage.userCount();
+    const users = await fastify.storage.userList({
       skip: (q.page - 1) * q.pageSize,
-      take: q.pageSize,
-      select: {
-        id: true,
-        role: true,
-        email: true,
-        phone: true,
-        bitrixContactId: true,
-        allowedDepth: true,
-        isActive: true,
-        createdAt: true
-      }
+      take: q.pageSize
     });
     return { items: users, page: q.page, pageSize: q.pageSize, total };
   });
@@ -64,16 +52,15 @@ export async function adminRoutes(fastify: FastifyInstance) {
     }
 
     const passwordHash = b.password ? await hashPassword(b.password) : null;
-    const user = await prisma.user.create({
-      data: {
-        role: b.role,
-        email: b.email?.toLowerCase() ?? null,
-        phone: b.phone ?? null,
-        passwordHash,
-        bitrixContactId: b.bitrixContactId,
-        allowedDepth: b.allowedDepth ?? (b.role === "client" ? 1 : 99)
-      }
-    });
+    const user = await fastify.storage.userCreate({
+      role: b.role,
+      email: b.email?.toLowerCase() ?? null,
+      phone: b.phone ?? null,
+      passwordHash,
+      bitrixContactId: b.bitrixContactId,
+      allowedDepth: b.allowedDepth ?? (b.role === "client" ? 1 : 99),
+      isActive: true
+    } as any);
 
     await writeAudit({ request, userId: request.user.sub, action: "admin.user.create", data: { userId: user.id } });
     return { id: user.id };
@@ -85,7 +72,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
     const { id } = Params.parse(request.params);
     const { allowedDepth } = Body.parse(request.body);
 
-    const user = await prisma.user.update({ where: { id }, data: { allowedDepth } });
+    const user = await fastify.storage.userUpdateAllowedDepth(id, allowedDepth);
     await writeAudit({
       request,
       userId: request.user.sub,
@@ -136,15 +123,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
     const Query = z.object({ referrerBitrixId: z.string().min(1) });
     const q = Query.parse(request.query);
 
-    const edges = await prisma.referralEdge.findMany({ where: { referrerBitrixId: q.referrerBitrixId } });
+    const edges = await fastify.storage.referralEdgesByReferrerId(q.referrerBitrixId);
     const ids = edges.map((e) => e.referredBitrixId);
-    const childCounts = await prisma.referralEdge.groupBy({
-      by: ["referrerBitrixId"],
-      where: { referrerBitrixId: { in: ids } },
-      _count: { _all: true }
-    });
-    const countMap = new Map(childCounts.map((x) => [x.referrerBitrixId, x._count._all]));
-    const contracts = await prisma.contract.findMany({ where: { referredBitrixId: { in: ids } } });
+    const countMap = await fastify.storage.referralChildCounts(ids);
+    const contracts = await fastify.storage.contractsByReferredIds(ids);
     const rewardMap = new Map<string, number>();
     for (const c of contracts) rewardMap.set(c.referredBitrixId, (rewardMap.get(c.referredBitrixId) ?? 0) + c.rewardAmount);
 
@@ -173,9 +155,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
       pageSize: z.coerce.number().int().min(1).max(200).default(50)
     });
     const q = Query.parse(request.query);
-    const total = await prisma.auditLog.count();
-    const items = await prisma.auditLog.findMany({
-      orderBy: { createdAt: "desc" },
+    const total = await fastify.storage.auditCount();
+    const items = await fastify.storage.auditList({
       skip: (q.page - 1) * q.pageSize,
       take: q.pageSize
     });

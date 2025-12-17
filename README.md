@@ -66,6 +66,7 @@ npm run dev:web
 - Бесплатный деплой на платформы: `docs/04-deploy-free-platform.md`
 - GitHub + GitHub Pages: `docs/05-github.md`
 - Backend + внешняя БД (миграция хостинга без переноса БД): `docs/06-backend-db-and-migration.md`
+- Google Sheets как БД (всё в таблице): `docs/07-sheets-db.md`
 
 ### Безопасность (реализовано)
 - **Email+Password**: Argon2id (с солью, параметрами по умолчанию для `argon2`).

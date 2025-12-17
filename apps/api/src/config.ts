@@ -25,6 +25,9 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().optional(),
   API_PUBLIC_ORIGIN: z.string().url().default("http://localhost:5173"),
 
+  // Storage backend
+  STORAGE: z.enum(["prisma", "sheets"]).default("prisma"),
+
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().default(900),
@@ -44,7 +47,14 @@ const EnvSchema = z.object({
 
   SMS_PROVIDER: z.enum(["stub"]).default("stub"),
 
-  APP_ENC_KEY_BASE64: z.string().optional().default("")
+  APP_ENC_KEY_BASE64: z.string().optional().default(""),
+
+  // Google Sheets storage (service account JSON base64)
+  SHEETS_SPREADSHEET_ID: z.string().optional(),
+  GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: z.string().optional(),
+
+  // One-time bootstrap for first admin (avoid chicken/egg)
+  SETUP_TOKEN: z.string().optional()
 });
 
 export type AppConfig = z.infer<typeof EnvSchema>;

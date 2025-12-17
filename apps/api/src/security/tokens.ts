@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { randomToken, sha256Base64Url } from "../utils/crypto.js";
-import { prisma } from "../prisma.js";
 import type { Role } from "@lk/shared";
+import type { Storage } from "../storage/storage.js";
 
 export type AccessTokenPayload = {
   sub: string; // userId
@@ -21,6 +21,7 @@ export const REFRESH_COOKIE_NAME = "refreshToken";
 export async function createSessionAndTokens(args: {
   fastify: FastifyInstance;
   reply: FastifyReply;
+  storage: Storage;
   userId: string;
   role: Role;
   mfaVerified: boolean;
@@ -42,17 +43,18 @@ export async function createSessionAndTokens(args: {
   const refreshHash = sha256Base64Url(refreshJwt);
 
   const expiresAt = new Date(Date.now() + args.refreshTtlSeconds * 1000);
-  await prisma.authSession.create({
-    data: {
-      id: sessionId,
-      userId: args.userId,
-      refreshTokenHash: refreshHash,
-      refreshJti,
-      mfaVerified: args.mfaVerified,
-      expiresAt,
-      ip: args.ip,
-      userAgent: args.userAgent
-    }
+  await args.storage.sessionCreate({
+    id: sessionId,
+    userId: args.userId,
+    refreshTokenHash: refreshHash,
+    refreshJti,
+    mfaVerified: args.mfaVerified,
+    createdAt: new Date(),
+    lastUsedAt: new Date(),
+    expiresAt,
+    revokedAt: null,
+    ip: args.ip ?? null,
+    userAgent: args.userAgent ?? null
   });
 
   // Refresh cookie is HttpOnly. Access token is returned in body for API-first (mobile-ready).
@@ -74,6 +76,7 @@ export async function createSessionAndTokens(args: {
 export async function rotateRefreshToken(args: {
   fastify: FastifyInstance;
   reply: FastifyReply;
+  storage: Storage;
   sessionId: string;
   userId: string;
   role: Role;
@@ -92,9 +95,11 @@ export async function rotateRefreshToken(args: {
   const refreshHash = sha256Base64Url(refreshJwt);
 
   const expiresAt = new Date(Date.now() + args.refreshTtlSeconds * 1000);
-  await prisma.authSession.update({
-    where: { id: args.sessionId },
-    data: { refreshJti, refreshTokenHash: refreshHash, expiresAt, lastUsedAt: new Date() }
+  await args.storage.sessionUpdate(args.sessionId, {
+    refreshJti,
+    refreshTokenHash: refreshHash,
+    expiresAt,
+    lastUsedAt: new Date()
   });
 
   args.reply.setCookie(REFRESH_COOKIE_NAME, refreshJwt, {

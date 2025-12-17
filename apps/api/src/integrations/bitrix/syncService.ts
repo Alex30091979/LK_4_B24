@@ -1,12 +1,13 @@
-import { prisma } from "../../prisma.js";
 import type { AppConfig } from "../../config.js";
 import type { BitrixClient } from "./bitrixClient.js";
+import type { Storage } from "../../storage/storage.js";
 
 export class BitrixSyncService {
   constructor(
     private args: {
       config: AppConfig;
       client: BitrixClient;
+      storage: Storage;
     }
   ) {}
 
@@ -20,15 +21,11 @@ export class BitrixSyncService {
   async syncPartial() {
     const startedAt = new Date();
 
-    const lastSync = await prisma.appSetting.findUnique({ where: { key: "bitrix.lastSyncAt" } });
+    const lastSync = await this.args.storage.settingFind("bitrix.lastSyncAt");
     const since = lastSync ? new Date(lastSync.value) : null;
 
     if (this.args.config.BITRIX_MODE !== "real") {
-      await prisma.appSetting.upsert({
-        where: { key: "bitrix.lastSyncAt" },
-        create: { key: "bitrix.lastSyncAt", value: startedAt.toISOString() },
-        update: { value: startedAt.toISOString() }
-      });
+      await this.args.storage.settingUpsert("bitrix.lastSyncAt", startedAt.toISOString());
       return { mode: "mock", since: since?.toISOString() ?? null, updatedEdges: 0, updatedContracts: 0 };
     }
 
@@ -104,35 +101,23 @@ export class BitrixSyncService {
       dStart = Number(next);
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.referralEdge.deleteMany({ where: { source: "bitrix" } });
-      await tx.contract.deleteMany({ where: { source: "bitrix" } });
-
-      if (edges.length > 0) {
-        await tx.referralEdge.createMany({ data: edges, skipDuplicates: true });
-      }
-
-      for (const c of contracts) {
-        await tx.contract.upsert({
-          where: { bitrixDealId: c.bitrixDealId },
-          create: c as any,
-          update: {
-            referredBitrixId: c.referredBitrixId,
-            contractDate: c.contractDate,
-            rewardAmount: c.rewardAmount,
-            currency: c.currency,
-            status: c.status as any,
-            source: c.source
-          }
-        });
-      }
-
-      await tx.appSetting.upsert({
-        where: { key: "bitrix.lastSyncAt" },
-        create: { key: "bitrix.lastSyncAt", value: startedAt.toISOString() },
-        update: { value: startedAt.toISOString() }
+    await this.args.storage.referralEdgesDeleteBySource("bitrix");
+    await this.args.storage.contractsDeleteBySource("bitrix");
+    if (edges.length > 0) {
+      await this.args.storage.referralEdgesCreateMany(edges);
+    }
+    for (const c of contracts) {
+      await this.args.storage.contractUpsertByDealId({
+        bitrixDealId: c.bitrixDealId,
+        referredBitrixId: c.referredBitrixId,
+        contractDate: c.contractDate,
+        rewardAmount: c.rewardAmount,
+        currency: c.currency,
+        status: c.status,
+        source: c.source
       });
-    });
+    }
+    await this.args.storage.settingUpsert("bitrix.lastSyncAt", startedAt.toISOString());
 
     return {
       mode: "real",

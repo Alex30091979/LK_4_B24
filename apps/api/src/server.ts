@@ -18,6 +18,8 @@ import { ReferralService } from "./domain/referrals/referralService.js";
 import { meRoutes } from "./routes/me.js";
 import { adminRoutes } from "./routes/admin.js";
 import { BitrixSyncService } from "./integrations/bitrix/syncService.js";
+import { createStorage } from "./storage/factory.js";
+import { setupRoutes } from "./routes/setup.js";
 
 loadEnv();
 const config = getConfig();
@@ -30,6 +32,9 @@ const app = Fastify({
 });
 
 app.decorate("config", config);
+const storage = createStorage(config);
+await storage.init();
+app.decorate("storage", storage);
 app.decorate("smsProvider", new StubSmsProvider());
 const bitrixClient =
   config.BITRIX_MODE === "real" && config.BITRIX_BASE_URL && config.BITRIX_WEBHOOK_PATH
@@ -37,8 +42,8 @@ const bitrixClient =
     : new MockBitrixClient();
 const bitrix = new BitrixService(bitrixClient);
 app.decorate("bitrix", bitrix);
-app.decorate("referrals", new ReferralService(bitrix));
-app.decorate("bitrixSync", new BitrixSyncService({ config, client: bitrixClient }));
+app.decorate("referrals", new ReferralService(bitrix, storage));
+app.decorate("bitrixSync", new BitrixSyncService({ config, client: bitrixClient, storage }));
 
 await app.register(cookie);
 await app.register(cors, {
@@ -74,6 +79,7 @@ app.setErrorHandler(async (err, request, reply) => {
 
 app.get("/health", async () => ({ ok: true }));
 await app.register(authRoutes, { prefix: "/auth" });
+await app.register(setupRoutes, { prefix: "/setup" });
 await app.register(meRoutes, { prefix: "/me" });
 await app.register(adminRoutes, { prefix: "/admin" });
 
@@ -89,7 +95,7 @@ if (config.NODE_ENV !== "development") {
   });
   // SPA fallback (avoid overriding API routes)
   app.get("/*", async (req, reply) => {
-    if (req.url.startsWith("/auth") || req.url.startsWith("/me") || req.url.startsWith("/admin") || req.url.startsWith("/docs") || req.url.startsWith("/health")) {
+    if (req.url.startsWith("/auth") || req.url.startsWith("/setup") || req.url.startsWith("/me") || req.url.startsWith("/admin") || req.url.startsWith("/docs") || req.url.startsWith("/health")) {
       reply.code(404);
       return { error: "NOT_FOUND" };
     }

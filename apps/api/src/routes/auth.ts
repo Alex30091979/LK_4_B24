@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { prisma } from "../prisma.js";
 import { verifyPassword } from "../security/password.js";
 import { getLockout, registerAuthFailure, registerAuthSuccess } from "../security/lockout.js";
 import { issueCsrfToken, requireCsrf } from "../security/csrf.js";
@@ -27,14 +26,14 @@ export async function authRoutes(fastify: FastifyInstance) {
     const { email, password, captchaToken } = Body.parse(request.body);
 
     const key = `email:${email.toLowerCase()}`;
-    if (await isCaptchaRequired(key)) {
+    if (await isCaptchaRequired(fastify.storage, key)) {
       if (!captchaToken || !(await verifyCaptcha({ token: captchaToken, ip: request.ip }))) {
         await writeAudit({ request, action: "auth.captcha.required", data: { key } });
         reply.code(400);
         return { error: "CAPTCHA_REQUIRED" };
       }
     }
-    const blockedUntil = await getLockout(key);
+    const blockedUntil = await getLockout(fastify.storage, key);
     if (blockedUntil) {
       await writeAudit({ request, action: "auth.login.blocked", data: { key, blockedUntil } });
       reply.header("Retry-After", Math.ceil((blockedUntil.getTime() - Date.now()) / 1000));
@@ -42,19 +41,19 @@ export async function authRoutes(fastify: FastifyInstance) {
       return { error: "LOCKED", blockedUntil: blockedUntil.toISOString() };
     }
 
-    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const user = await fastify.storage.userFindByEmail(email.toLowerCase());
     const ok = !!user?.passwordHash && (await verifyPassword(user.passwordHash, password));
 
     if (!ok || !user || !user.isActive) {
-      const { blockedUntil: until, retryAfterMs } = await registerAuthFailure(key);
+      const { blockedUntil: until, retryAfterMs } = await registerAuthFailure(fastify.storage, key);
       await writeAudit({ request, action: "auth.login.failed", data: { key, retryAfterMs, until } });
       reply.header("Retry-After", Math.ceil(retryAfterMs / 1000));
       reply.code(401);
       return { error: "INVALID_CREDENTIALS", retryAfterMs, blockedUntil: until?.toISOString() ?? null };
     }
 
-    await registerAuthSuccess(key);
-    const totp = user.role === "admin" ? await prisma.totpSecret.findUnique({ where: { userId: user.id } }) : null;
+    await registerAuthSuccess(fastify.storage, key);
+    const totp = user.role === "admin" ? await fastify.storage.totpFindByUserId(user.id) : null;
     const mfaEnabled = !!totp?.enabled;
     const mfaSetupRequired = user.role === "admin" && !mfaEnabled;
     const mfaRequired = user.role === "admin" && mfaEnabled;
@@ -62,6 +61,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const { accessToken } = await createSessionAndTokens({
       fastify,
       reply,
+      storage: fastify.storage,
       userId: user.id,
       role: user.role,
       mfaVerified: user.role === "admin" ? false : true,
@@ -87,7 +87,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const { phone, captchaToken } = Body.parse(request.body);
     const key = `phone:${phone}`;
 
-    if (await isCaptchaRequired(key)) {
+    if (await isCaptchaRequired(fastify.storage, key)) {
       if (!captchaToken || !(await verifyCaptcha({ token: captchaToken, ip: request.ip }))) {
         await writeAudit({ request, action: "auth.captcha.required", data: { key } });
         reply.code(400);
@@ -95,7 +95,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const blockedUntil = await getLockout(key);
+    const blockedUntil = await getLockout(fastify.storage, key);
     if (blockedUntil) {
       await writeAudit({ request, action: "auth.sms_request.blocked", data: { key, blockedUntil } });
       reply.header("Retry-After", Math.ceil((blockedUntil.getTime() - Date.now()) / 1000));
@@ -107,8 +107,17 @@ export async function authRoutes(fastify: FastifyInstance) {
     const codeHash = hashSmsCode(code);
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    await prisma.smsCode.create({
-      data: { phone, codeHash, expiresAt, ip: request.ip }
+    await fastify.storage.smsCreate({
+      id: `sms_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      phone,
+      codeHash,
+      createdAt: new Date(),
+      expiresAt,
+      consumedAt: null,
+      attempts: 0,
+      maxAttempts: 6,
+      blockedUntil: null,
+      ip: request.ip ?? null
     });
 
     await fastify.smsProvider.sendSms({ to: phone, message: `Ваш код входа: ${code}` });
@@ -123,7 +132,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const { phone, code, captchaToken } = Body.parse(request.body);
     const key = `phone:${phone}`;
 
-    if (await isCaptchaRequired(key)) {
+    if (await isCaptchaRequired(fastify.storage, key)) {
       if (!captchaToken || !(await verifyCaptcha({ token: captchaToken, ip: request.ip }))) {
         await writeAudit({ request, action: "auth.captcha.required", data: { key } });
         reply.code(400);
@@ -131,7 +140,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const blockedUntil = await getLockout(key);
+    const blockedUntil = await getLockout(fastify.storage, key);
     if (blockedUntil) {
       await writeAudit({ request, action: "auth.sms_verify.blocked", data: { key, blockedUntil } });
       reply.header("Retry-After", Math.ceil((blockedUntil.getTime() - Date.now()) / 1000));
@@ -139,13 +148,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       return { error: "LOCKED", blockedUntil: blockedUntil.toISOString() };
     }
 
-    const sms = await prisma.smsCode.findFirst({
-      where: { phone, consumedAt: null, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: "desc" }
-    });
+    const sms = await fastify.storage.smsFindLatestActive(phone, new Date());
 
     if (!sms || sms.blockedUntil?.getTime()! > Date.now()) {
-      const { blockedUntil: until, retryAfterMs } = await registerAuthFailure(key);
+      const { blockedUntil: until, retryAfterMs } = await registerAuthFailure(fastify.storage, key);
       await writeAudit({ request, action: "auth.sms_verify.failed", data: { phone, retryAfterMs, until } });
       reply.header("Retry-After", Math.ceil(retryAfterMs / 1000));
       reply.code(401);
@@ -153,39 +159,33 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     if (sms.attempts >= sms.maxAttempts) {
-      await prisma.smsCode.update({
-        where: { id: sms.id },
-        data: { blockedUntil: new Date(Date.now() + 15 * 60 * 1000) }
-      });
-      const { blockedUntil: until } = await registerAuthFailure(key);
+      await fastify.storage.smsUpdate(sms.id, { blockedUntil: new Date(Date.now() + 15 * 60 * 1000) });
+      const { blockedUntil: until } = await registerAuthFailure(fastify.storage, key);
       await writeAudit({ request, action: "auth.sms_verify.locked", data: { phone, until } });
       reply.code(429);
       return { error: "LOCKED" };
     }
 
     const ok = verifySmsCode(sms.codeHash, code);
-    await prisma.smsCode.update({
-      where: { id: sms.id },
-      data: { attempts: { increment: 1 }, consumedAt: ok ? new Date() : null }
-    });
+    await fastify.storage.smsUpdate(sms.id, { attempts: sms.attempts + 1, consumedAt: ok ? new Date() : null });
 
     if (!ok) {
-      const { blockedUntil: until, retryAfterMs } = await registerAuthFailure(key);
+      const { blockedUntil: until, retryAfterMs } = await registerAuthFailure(fastify.storage, key);
       await writeAudit({ request, action: "auth.sms_verify.failed", data: { phone, retryAfterMs, until } });
       reply.header("Retry-After", Math.ceil(retryAfterMs / 1000));
       reply.code(401);
       return { error: "INVALID_CODE", retryAfterMs, blockedUntil: until?.toISOString() ?? null };
     }
 
-    const user = await prisma.user.findUnique({ where: { phone } });
+    const user = await fastify.storage.userFindByPhone(phone);
     if (!user || !user.isActive) {
       await writeAudit({ request, action: "auth.sms_verify.no_user", data: { phone } });
       reply.code(403);
       return { error: "USER_NOT_PROVISIONED" };
     }
 
-    await registerAuthSuccess(key);
-    const totp = user.role === "admin" ? await prisma.totpSecret.findUnique({ where: { userId: user.id } }) : null;
+    await registerAuthSuccess(fastify.storage, key);
+    const totp = user.role === "admin" ? await fastify.storage.totpFindByUserId(user.id) : null;
     const mfaEnabled = !!totp?.enabled;
     const mfaSetupRequired = user.role === "admin" && !mfaEnabled;
     const mfaRequired = user.role === "admin" && mfaEnabled;
@@ -193,6 +193,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const { accessToken } = await createSessionAndTokens({
       fastify,
       reply,
+      storage: fastify.storage,
       userId: user.id,
       role: user.role,
       mfaVerified: user.role === "admin" ? false : true,
@@ -218,6 +219,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const sessionWrap = await getSessionFromRefreshCookie({
       fastify,
       request,
+      storage: fastify.storage,
       refreshSecret: fastify.config.JWT_REFRESH_SECRET
     });
     if (!sessionWrap) {
@@ -225,7 +227,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       return { error: "INVALID_SESSION" };
     }
 
-    const user = await prisma.user.findUnique({ where: { id: sessionWrap.session.userId } });
+    const user = await fastify.storage.userFindById(sessionWrap.session.userId);
     if (!user || !user.isActive) {
       reply.code(401);
       return { error: "INVALID_SESSION" };
@@ -234,6 +236,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const { accessToken } = await rotateRefreshToken({
       fastify,
       reply,
+      storage: fastify.storage,
       sessionId: sessionWrap.session.id,
       userId: user.id,
       role: user.role,
@@ -254,10 +257,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     const sessionWrap = await getSessionFromRefreshCookie({
       fastify,
       request,
+      storage: fastify.storage,
       refreshSecret: fastify.config.JWT_REFRESH_SECRET
     });
     if (sessionWrap) {
-      await prisma.authSession.update({ where: { id: sessionWrap.session.id }, data: { revokedAt: new Date() } });
+      await fastify.storage.sessionUpdate(sessionWrap.session.id, { revokedAt: new Date() });
       await writeAudit({ request, userId: sessionWrap.session.userId, action: "auth.logout" });
     }
     reply.clearCookie(REFRESH_COOKIE_NAME, { path: "/auth" });
@@ -268,6 +272,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const sessionWrap = await getSessionFromRefreshCookie({
       fastify,
       request,
+      storage: fastify.storage,
       refreshSecret: fastify.config.JWT_REFRESH_SECRET
     });
     if (!sessionWrap) {
@@ -275,7 +280,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       return { error: "INVALID_SESSION" };
     }
 
-    const user = await prisma.user.findUnique({ where: { id: sessionWrap.session.userId } });
+    const user = await fastify.storage.userFindById(sessionWrap.session.userId);
     if (!user || user.role !== "admin") {
       reply.code(403);
       return { error: "FORBIDDEN" };
@@ -285,11 +290,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const encKey = fastify.config.APP_ENC_KEY_BASE64;
     const secretEnc = encKey ? aes256gcmEncrypt(secret, encKey) : secret;
 
-    await prisma.totpSecret.upsert({
-      where: { userId: user.id },
-      create: { userId: user.id, secretEnc, enabled: false },
-      update: { secretEnc, enabled: false }
-    });
+    await fastify.storage.totpUpsert(user.id, secretEnc, false);
 
     const label = user.email ?? user.phone ?? user.id;
     const issuer = "LK";
@@ -305,6 +306,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const sessionWrap = await getSessionFromRefreshCookie({
       fastify,
       request,
+      storage: fastify.storage,
       refreshSecret: fastify.config.JWT_REFRESH_SECRET
     });
     if (!sessionWrap) {
@@ -312,13 +314,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       return { error: "INVALID_SESSION" };
     }
 
-    const user = await prisma.user.findUnique({ where: { id: sessionWrap.session.userId } });
+    const user = await fastify.storage.userFindById(sessionWrap.session.userId);
     if (!user || user.role !== "admin") {
       reply.code(403);
       return { error: "FORBIDDEN" };
     }
 
-    const totp = await prisma.totpSecret.findUnique({ where: { userId: user.id } });
+    const totp = await fastify.storage.totpFindByUserId(user.id);
     if (!totp) {
       reply.code(400);
       return { error: "MFA_NOT_CONFIGURED" };
@@ -333,12 +335,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       return { error: "INVALID_CODE" };
     }
 
-    await prisma.totpSecret.update({ where: { userId: user.id }, data: { enabled: true } });
-    await prisma.authSession.update({ where: { id: sessionWrap.session.id }, data: { mfaVerified: true } });
+    await fastify.storage.totpUpdate(user.id, { enabled: true });
+    await fastify.storage.sessionUpdate(sessionWrap.session.id, { mfaVerified: true });
 
     const { accessToken } = await rotateRefreshToken({
       fastify,
       reply,
+      storage: fastify.storage,
       sessionId: sessionWrap.session.id,
       userId: user.id,
       role: user.role,
