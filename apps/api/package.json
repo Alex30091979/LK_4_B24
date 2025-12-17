@@ -10,6 +10,10 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
     "db:seed": "tsx prisma/seed.ts",
+    "db:generate:pg": "prisma generate --schema prisma/schema.postgres.prisma",
+    "db:migrate:pg": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
+    "db:migrate:pg:dev": "prisma migrate dev --name init --schema prisma/schema.postgres.prisma",
+    "db:studio:pg": "prisma studio --schema prisma/schema.postgres.prisma",
     "db:studio": "prisma studio",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit"

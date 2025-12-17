@@ -65,6 +65,7 @@ npm run dev:web
 - Деплой на VPS (MVP): `docs/03-deploy-vps.md`
 - Бесплатный деплой на платформы: `docs/04-deploy-free-platform.md`
 - GitHub + GitHub Pages: `docs/05-github.md`
+- Backend + внешняя БД (миграция хостинга без переноса БД): `docs/06-backend-db-and-migration.md`
 
 ### Безопасность (реализовано)
 - **Email+Password**: Argon2id (с солью, параметрами по умолчанию для `argon2`).
