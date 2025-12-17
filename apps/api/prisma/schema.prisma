@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  client
+  admin
+}
+
+enum ContractStatus {
+  active
+  inactive
+}
+
+model User {
+  id              String   @id @default(cuid())
+  role            Role     @default(client)
+  email           String?  @unique
+  phone           String?  @unique
+  passwordHash    String?
+  bitrixContactId String   @unique
+  allowedDepth    Int      @default(1) // for clients only; admins are not limited
+  isActive        Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions     AuthSession[]
+  totp         TotpSecret?
+  auditLogs    AuditLog[]
+}
+
+model AuthSession {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  refreshTokenHash String
+  refreshJti       String
+  mfaVerified      Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  lastUsedAt       DateTime @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  ip               String?
+  userAgent        String?
+}
+
+model TotpSecret {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  secretEnc       String // encrypted base32 secret (or plaintext in dev if APP_ENC_KEY is empty)
+  enabled         Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SmsCode {
+  id          String   @id @default(cuid())
+  phone       String
+  codeHash    String
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(6)
+  blockedUntil DateTime?
+  ip          String?
+}
+
+model AuthAttempt {
+  id           String   @id @default(cuid())
+  key          String   @unique // e.g. "email:foo@bar", "phone:+7999..."
+  count        Int      @default(0)
+  firstAt      DateTime @default(now())
+  lastAt       DateTime @default(now())
+  blockedUntil DateTime?
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  data      Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+}
+
+model AppSetting {
+  key       String @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model ReferralEdge {
+  id               String   @id @default(cuid())
+  referrerBitrixId String
+  referredBitrixId String
+  source           String   @default("bitrix") // bitrix/manual
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([referrerBitrixId, referredBitrixId])
+  @@index([referrerBitrixId])
+  @@index([referredBitrixId])
+}
+
+model Contract {
+  id               String         @id @default(cuid())
+  bitrixDealId     String         @unique
+  referredBitrixId String
+  contractDate     DateTime
+  rewardAmount     Int
+  currency         String         @default("RUB")
+  status           ContractStatus @default(active)
+  source           String         @default("bitrix") // bitrix/mock/manual
+  updatedAt        DateTime       @updatedAt
+
+  @@index([referredBitrixId])
+}
+
+
