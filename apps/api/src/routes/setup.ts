@@ -19,7 +19,8 @@ export async function setupRoutes(fastify: FastifyInstance) {
       email: z.string().email(),
       password: z.string().min(10),
       bitrixContactId: z.string().min(1),
-      phone: z.string().min(7).max(32).optional()
+      phone: z.string().min(7).max(32).optional(),
+      role: z.enum(["admin", "client"]).default("admin")
     });
     const b = Body.parse(request.body);
 
@@ -29,12 +30,12 @@ export async function setupRoutes(fastify: FastifyInstance) {
     }
 
     const user = await fastify.storage.userCreate({
-      role: "admin",
+      role: b.role,
       email: b.email.toLowerCase(),
       phone: b.phone ?? null,
       passwordHash: await hashPassword(b.password),
       bitrixContactId: b.bitrixContactId,
-      allowedDepth: 99,
+      allowedDepth: b.role === "admin" ? 99 : 1,
       isActive: true
     } as any);
 

@@ -21,8 +21,11 @@ export class SheetsClient {
   }
 
   private async authHeader() {
-    const token = await this.jwt.getAccessToken();
-    if (!token || typeof token !== "string") throw new Error("Failed to get Google access token");
+    const res = await this.jwt.getAccessToken();
+    const token = res?.token;
+    if (!token || typeof token !== "string") {
+      throw new Error("Failed to get Google access token. Check service account credentials and spreadsheet access.");
+    }
     return `Bearer ${token}`;
   }
 

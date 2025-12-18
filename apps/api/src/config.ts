@@ -36,7 +36,8 @@ const EnvSchema = z.object({
   COOKIE_SECURE: z.coerce.boolean().default(false),
   COOKIE_SAMESITE: z.enum(["strict", "lax", "none"]).default("strict"),
 
-  DATABASE_URL: z.string().min(1),
+  // Required only when STORAGE=prisma
+  DATABASE_URL: z.string().optional(),
 
   BITRIX_MODE: z.enum(["mock", "real"]).default("mock"),
   BITRIX_BASE_URL: z.string().url().optional(),

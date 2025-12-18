@@ -32,7 +32,7 @@ const app = Fastify({
 });
 
 app.decorate("config", config);
-const storage = createStorage(config);
+const storage = await createStorage(config);
 await storage.init();
 app.decorate("storage", storage);
 app.decorate("smsProvider", new StubSmsProvider());
