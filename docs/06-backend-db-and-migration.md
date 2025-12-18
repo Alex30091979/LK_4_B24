@@ -69,3 +69,4 @@ Environment variables (Render):
 - данные остаются в Neon (без переноса)
 
 
+

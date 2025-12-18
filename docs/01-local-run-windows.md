@@ -53,3 +53,4 @@ Demo-логины:
 - **admin**: `admin@demo.local` / `Admin1234!` (попросит 2FA)
 
 
+
